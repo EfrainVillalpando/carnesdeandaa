@@ -430,6 +430,23 @@ th{font-size:12px;text-transform:uppercase;color:var(--muted)}
           <button id="changeAdminPassBtn" class="primary">Cambiar clave</button>
         </div>
         <div id="adminPassMessage" class="message"></div>
+        <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--line)">
+          <p style="margin:0 0 10px;color:var(--muted);font-size:13px">¿Ya cambiaste la clave en este equipo antes de tener internet aquí? Súbela para que sea la misma en todos los equipos conectados a la nube.</p>
+          <button id="pushAdminPassBtn" class="secondary">Usar la clave de este equipo en todos lados</button>
+        </div>
+      </div>
+
+      <div class="panel hidden" style="margin-top:18px;padding:17px;max-width:460px">
+        <h3 style="margin:0 0 6px">Respaldo de datos</h3>
+        <p style="margin:0 0 14px;color:var(--muted);font-size:13px">Descarga todo lo que este equipo tiene guardado (clientes, notas, precios, abonos, inventario) y súbelo a otra base cuando lo necesites.</p>
+        <button id="exportBackupBtn" class="secondary">📤 Exportar respaldo (archivo .json)</button>
+        <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--line)">
+          <label style="display:block;margin-bottom:8px;font-weight:700;font-size:13px">Importar un respaldo a esta base</label>
+          <input id="importBackupFile" type="file" accept="application/json">
+          <div class="file-help">Se sube a la base que está configurada ahora mismo en esta página. No borra lo que ya exista; si un registro tiene el mismo id, lo actualiza.</div>
+          <button id="importBackupBtn" class="primary" style="margin-top:10px">📥 Importar a esta base</button>
+        </div>
+        <div id="backupMessage" class="message"></div>
       </div>
     </section>
 
@@ -612,12 +629,25 @@ function derivarClave(pass,salt,iter){
    administrador"). El cambio se guarda en este navegador; ADMIN_AUTH del
    código sigue siendo la clave de fábrica por si algún día borran los datos
    del navegador. */
+let cloudAdminAuth=null; // se llena al sincronizar con Supabase; si existe, manda sobre la de este equipo
 function getAdminAuth(){
+  if(cloudAdminAuth&&cloudAdminAuth.salt&&cloudAdminAuth.hash&&cloudAdminAuth.iter) return cloudAdminAuth;
   try{
     const o=JSON.parse(localStorage.getItem("c360_admin_auth_override")||"null");
     if(o&&o.salt&&o.hash&&o.iter) return o;
   }catch(_){}
   return ADMIN_AUTH;
+}
+/* Sube la clave de este equipo a Supabase para que sea la misma en todos lados. */
+async function subirClaveALaNube(){
+  if(!CLOUD_ENABLED) throw new Error("No hay conexión a Supabase en este momento.");
+  let local=null;
+  try{ local=JSON.parse(localStorage.getItem("c360_admin_auth_override")||"null"); }catch(_){}
+  if(!local||!local.salt||!local.hash) throw new Error("Este equipo no tiene guardada una clave distinta a la de fábrica.");
+  const r=await db.from("c360_settings").upsert({id:"admin_auth",value:local});
+  if(r.error) throw new Error("No se pudo subir la clave: "+(r.error.message||"revisa que exista la tabla c360_settings."));
+  cloudAdminAuth=local;
+  return true;
 }
 function setAdminAuth(auth){
   localStorage.setItem("c360_admin_auth_override",JSON.stringify(auth));
@@ -631,7 +661,7 @@ function verificarClaveAdmin(pass){
   for(let i=0;i<calc.length;i++) dif|=calc.charCodeAt(i)^auth.hash.charCodeAt(i%auth.hash.length);
   return dif===0;
 }
-function cambiarClaveAdmin(actual,nueva){
+async function cambiarClaveAdmin(actual,nueva){
   if(!verificarClaveAdmin(actual)) throw new Error("La clave actual no es correcta.");
   if(!nueva||nueva.length<10) throw new Error("La nueva clave debe tener 10 caracteres o más.");
   if(nueva===actual) throw new Error("La nueva clave debe ser distinta de la actual.");
@@ -639,8 +669,16 @@ function cambiarClaveAdmin(actual,nueva){
   (window.crypto||{getRandomValues:a=>{for(let i=0;i<a.length;i++)a[i]=Math.floor(Math.random()*256);return a}}).getRandomValues(r);
   r.forEach(b=>salt+=b.toString(16).padStart(2,"0"));
   const iter=120000;
-  setAdminAuth({salt,iter,hash:derivarClave(nueva,salt,iter)});
-  return true;
+  const auth={salt,iter,hash:derivarClave(nueva,salt,iter)};
+  setAdminAuth(auth);
+  let subida=false;
+  if(CLOUD_ENABLED){
+    try{
+      const r2=await db.from("c360_settings").upsert({id:"admin_auth",value:auth});
+      if(!r2.error){cloudAdminAuth=auth;subida=true;}
+    }catch(_){}
+  }
+  return subida;
 }
 /* Generador de la linea ADMIN_AUTH. Uso desde la consola del navegador. */
 function generarClaveAdmin(pass){
@@ -749,8 +787,8 @@ const money=new Intl.NumberFormat("es-MX",{style:"currency",currency:"MXN"});
    1) Crea el proyecto y ejecuta el archivo SQL entregado.
    2) Copia aquí Project URL y anon public key.
    ========================================================= */
-const SUPABASE_URL="https://bjebybdqcqscouxlinfd.supabase.co";
-const SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJqZWJ5YmRxY3FzY291eGxpbmZkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTYzMjQ3MTksImV4cCI6MjA3MTkwMDcxOX0.mQgWtiYEyJTiF04pdcLv63SqPNrU1Iehws0vKqr82O0";
+const SUPABASE_URL="https://blrluyfarjdprlkdgprk.supabase.co";
+const SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJscmx1eWZhcmpkcHJsa2RncHJrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk2OTE1MDcsImV4cCI6MjEwNTI2NzUwN30.Ogy6jrpuEZzcjDL600Nf98y_EFrann6yUtS_LjuzNfI";
 const CLOUD_ENABLED=SUPABASE_URL.startsWith("https://")&&!SUPABASE_URL.includes("PEGA_AQUI")&&SUPABASE_ANON_KEY.length>40;
 const db=CLOUD_ENABLED?window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY):null;
 
@@ -807,6 +845,10 @@ async function loadCloudData(showStatus=true){
     db.from("c360_inventory").select("*").order("created_at",{ascending:false})
   ]);
   const payments=await db.from("c360_payments").select("*").order("payment_date",{ascending:false});
+  try{
+    const settings=await db.from("c360_settings").select("*").eq("id","admin_auth").maybeSingle();
+    if(!settings.error&&settings.data?.value?.salt) cloudAdminAuth=settings.data.value;
+  }catch(_){ /* la tabla c360_settings todavía no existe: se ignora, no es crítico */ }
   const error=[userRows,clients,products,prices,notes,inventory].find(x=>x.error)?.error;
   if(error){console.error(error);loadLocalBackup();renderAll();setSync("Sin conexión: usando respaldo local","error");return}
   users=[
@@ -984,14 +1026,26 @@ $("saveEmployee").onclick=async()=>{
   $("employeeMessage").className=guardadoEnNube?"message ok":"message";
 };
 
-$("changeAdminPassBtn").onclick=()=>{
+$("changeAdminPassBtn").onclick=async()=>{
   const msg=$("adminPassMessage");
   const actual=$("adminPassCurrent").value, n1=$("adminPassNew").value, n2=$("adminPassNew2").value;
   if(n1!==n2){msg.textContent="Las dos claves nuevas no coinciden.";msg.className="message error";return}
   try{
-    cambiarClaveAdmin(actual,n1);
+    const subida=await cambiarClaveAdmin(actual,n1);
     $("adminPassCurrent").value="";$("adminPassNew").value="";$("adminPassNew2").value="";
-    msg.textContent="Clave actualizada. Úsala la próxima vez que inicies sesión.";msg.className="message ok";
+    msg.textContent=subida
+      ?"Clave actualizada y sincronizada: ya sirve en todos los equipos."
+      :"Clave actualizada solo en este equipo (sin conexión a la nube en este momento). Cuando haya internet, usa el botón de abajo para subirla.";
+    msg.className="message ok";
+  }catch(e){msg.textContent=e.message;msg.className="message error";}
+};
+$("pushAdminPassBtn").onclick=async()=>{
+  const msg=$("adminPassMessage");
+  msg.textContent="Subiendo...";msg.className="message";
+  try{
+    await subirClaveALaNube();
+    msg.textContent="Listo: la clave de este equipo ya es la misma en todos los equipos conectados a la nube.";
+    msg.className="message ok";
   }catch(e){msg.textContent=e.message;msg.className="message error";}
 };
 
@@ -1317,6 +1371,98 @@ $("saveAbono").onclick=async()=>{
   renderAccounts();localBackup();
 };
 $("abonoDate").value=new Date().toISOString().slice(0,10);
+function exportarRespaldo(){
+  const data={
+    exportado:new Date().toISOString(),
+    users:users.filter(u=>u.role==="operator"),
+    clients:state.clients,
+    products:state.products,
+    prices:state.prices,
+    notes:state.notes,
+    payments:state.payments,
+    inventory:state.inventory
+  };
+  const blob=new Blob([JSON.stringify(data,null,2)],{type:"application/json"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");
+  a.href=url;a.download=`c360-respaldo-${new Date().toISOString().slice(0,19).replace(/[:T]/g,"-")}.json`;
+  document.body.appendChild(a);a.click();a.remove();
+  URL.revokeObjectURL(url);
+}
+async function importarRespaldoDesdeArchivo(file){
+  const msg=$("backupMessage");
+  if(!CLOUD_ENABLED){msg.textContent="No hay conexión configurada a ninguna base en este momento.";msg.className="message error";return}
+  let data;
+  try{ data=JSON.parse(await file.text()); }
+  catch(e){ msg.textContent="El archivo no es un respaldo válido.";msg.className="message error";return }
+
+  let resumen=[];
+  try{
+    if(Array.isArray(data.clients)&&data.clients.length){
+      const r=await db.from("c360_clients").upsert(data.clients.map(c=>({id:c.id,name:c.name,phone:c.phone||""})),{onConflict:"id"});
+      if(r.error) throw new Error("Clientes: "+r.error.message);
+      resumen.push(`${data.clients.length} clientes`);
+    }
+    if(Array.isArray(data.products)&&data.products.length){
+      const r=await db.from("c360_products").upsert(data.products.map(p=>({id:p.id,name:p.name,price:Number(p.price||0)})),{onConflict:"id"});
+      if(r.error) throw new Error("Productos: "+r.error.message);
+      resumen.push(`${data.products.length} productos`);
+    }
+    if(data.prices&&typeof data.prices==="object"){
+      const rows=[];
+      Object.entries(data.prices).forEach(([clientId,byProduct])=>{
+        Object.entries(byProduct||{}).forEach(([productId,price])=>{
+          rows.push({client_id:clientId,product_id:productId,price:Number(price)});
+        });
+      });
+      if(rows.length){
+        const r=await db.from("c360_prices").upsert(rows,{onConflict:"client_id,product_id"});
+        if(r.error) throw new Error("Precios especiales: "+r.error.message);
+        resumen.push(`${rows.length} precios especiales`);
+      }
+    }
+    if(Array.isArray(data.notes)&&data.notes.length){
+      const rows=data.notes.map(n=>({id:n.id,folio:n.folio,client_id:n.clientId,client_name:n.clientName,client_phone:n.clientPhone||"",items:n.items||[],total:Number(n.total||0),created_at:n.createdAt,print_status:n.printStatus||"pendiente",created_by:n.createdBy||""}));
+      const r=await db.from("c360_notes").upsert(rows,{onConflict:"id"});
+      if(r.error) throw new Error("Notas de venta: "+r.error.message);
+      resumen.push(`${rows.length} notas de venta`);
+    }
+    if(Array.isArray(data.payments)&&data.payments.length){
+      const rows=data.payments.map(pay=>({id:pay.id,client_id:pay.clientId,amount:Number(pay.amount||0),payment_date:pay.date,method:pay.method||"",reference:pay.reference||"",notes:pay.notes||"",created_at:pay.createdAt,created_by:pay.createdBy||""}));
+      const r=await db.from("c360_payments").upsert(rows,{onConflict:"id"});
+      if(r.error) throw new Error("Abonos: "+r.error.message);
+      resumen.push(`${rows.length} abonos`);
+    }
+    if(Array.isArray(data.inventory)&&data.inventory.length){
+      const rows=data.inventory.map(m=>({id:m.id,type:m.type,move_date:m.date,product_id:m.productId,product_name:m.productName,unit:m.unit,qty:Number(m.qty||0),unit_cost:Number(m.unitCost||0),supplier:m.supplier||"",lot:m.lot||"",reference:m.reference||"",reason:m.reason||"",notes:m.notes||"",created_at:m.createdAt}));
+      const r=await db.from("c360_inventory").upsert(rows,{onConflict:"id"});
+      if(r.error) throw new Error("Inventario: "+r.error.message);
+      resumen.push(`${rows.length} movimientos de inventario`);
+    }
+    if(Array.isArray(data.users)&&data.users.length){
+      const rows=data.users.filter(u=>u.role==="operator").map(u=>({id:u.id,name:u.name,role:"operator",photo:u.photo||""}));
+      if(rows.length){
+        const r=await db.from("c360_users").upsert(rows,{onConflict:"id"});
+        if(r.error) throw new Error("Empleados: "+r.error.message);
+        resumen.push(`${rows.length} empleados`);
+      }
+    }
+  }catch(e){
+    msg.textContent="Se detuvo la importación: "+e.message;msg.className="message error";
+    return;
+  }
+  msg.textContent=resumen.length?`Importado a esta base: ${resumen.join(", ")}.`:"El archivo no tenía datos para importar.";
+  msg.className="message ok";
+  await loadCloudData(false);
+}
+$("exportBackupBtn").onclick=exportarRespaldo;
+$("importBackupBtn").onclick=async()=>{
+  const file=$("importBackupFile").files?.[0];
+  const msg=$("backupMessage");
+  if(!file){msg.textContent="Elige primero un archivo .json de respaldo.";msg.className="message error";return}
+  msg.textContent="Importando…";msg.className="message";
+  await importarRespaldoDesdeArchivo(file);
+};
 $("generateReport").onclick=generateReport;$("printReport").onclick=()=>window.print();
 $("reportDate").value=new Date().toISOString().slice(0,10);$("paymentDate").value=new Date().toISOString().slice(0,10);$("invEntryDate").value=new Date().toISOString().slice(0,10);$("invExitDate").value=new Date().toISOString().slice(0,10);
 async function sincronizarPendientes(){
