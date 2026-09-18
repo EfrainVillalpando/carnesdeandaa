@@ -220,8 +220,8 @@ th{font-size:12px;text-transform:uppercase;color:var(--muted)}
 
 @media print{
   body *{visibility:hidden}
-  #pdfSheet,#pdfSheet *{visibility:visible}
-  #pdfSheet{position:absolute;left:0;top:0;width:210mm;min-height:297mm;box-shadow:none;margin:0}
+  #pdfSheet,#pdfSheet *,#accountPdfSheet,#accountPdfSheet *{visibility:visible}
+  #pdfSheet,#accountPdfSheet{position:absolute;left:0;top:0;width:210mm;min-height:297mm;box-shadow:none;margin:0}
   @page{size:A4;margin:0}
 }
 
@@ -335,7 +335,7 @@ th{font-size:12px;text-transform:uppercase;color:var(--muted)}
       <div class="grid">
         <div class="field"><label>Nombre</label><input id="clientName"></div>
         <div class="field"><label>Teléfono</label><input id="clientPhone"></div>
-        <div class="field full"><button id="saveClient" class="primary">Guardar cliente</button></div>
+        <div class="field full"><button id="saveClient" class="primary">Guardar cliente</button><button id="cancelClientEdit" class="secondary hidden">Cancelar edición</button></div>
       </div>
       <div id="clientMessage" class="message"></div>
       <div id="clientList"></div>
@@ -357,7 +357,10 @@ th{font-size:12px;text-transform:uppercase;color:var(--muted)}
       <div id="accountDetail" class="panel hidden" style="margin:18px 0 0;padding:18px">
         <div class="account-detail-head">
           <div><h3 id="accountClientName">Cuenta</h3><p id="accountClientPhone"></p></div>
-          <div><small style="display:block;color:var(--muted);font-weight:700">Saldo pendiente</small><strong id="accountClientBalance" style="font-size:28px">$0.00</strong></div>
+          <div style="text-align:right">
+            <small style="display:block;color:var(--muted);font-weight:700">Saldo pendiente</small><strong id="accountClientBalance" style="font-size:28px">$0.00</strong>
+            <div><button id="printAccountBtn" class="secondary hidden" style="margin-top:8px">🖨️ Imprimir / PDF de cuenta</button></div>
+          </div>
         </div>
         <div class="grid" style="margin-top:16px">
           <div class="field"><label>Fecha del abono</label><input id="paymentDate" type="date"></div>
@@ -516,6 +519,7 @@ th{font-size:12px;text-transform:uppercase;color:var(--muted)}
   </main>
 </div>
 
+<div id="accountPdfSheet" class="pdf-sheet" style="position:fixed;left:-99999px;top:0"></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 /* =========================================================
@@ -671,7 +675,7 @@ function enterApp(user){
 function applyPermissions(){
   const admin=currentUser?.role==="admin";
   document.querySelectorAll('.menu button').forEach(btn=>{
-    const allowed=admin||btn.dataset.module==="notas"||btn.dataset.module==="cuentas";
+    const allowed=admin||btn.dataset.module==="notas";
     btn.classList.toggle("hidden",!allowed);
   });
   if(!admin){
@@ -1036,8 +1040,21 @@ function cancelNoteEditing(clearItems=true){
   $("saveNote").textContent="Guardar e imprimir";$("saveNoteNoPrint").textContent="Guardar sin imprimir";
   if(clearItems){state.items=[];renderItems()}
 }
-function renderClients(){$("clientList").innerHTML=state.clients.length?state.clients.map(c=>`<div class="panel" style="padding:14px;margin-top:10px"><strong>${esc(c.name)}</strong><span class="badge">${c.phone?esc(c.phone):"Sin teléfono"}</span></div>`).join(""):'<div class="empty">Sin clientes</div>'}
+let editingClientId=null;
+function renderClients(){
+  $("clientList").innerHTML=state.clients.length?state.clients.map(c=>`<div class="panel" style="padding:14px;margin-top:10px;display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap"><div><strong>${esc(c.name)}</strong> <span class="badge">${c.phone?esc(c.phone):"Sin teléfono"}</span></div><button class="secondary" data-edit-client="${c.id}" style="min-height:38px;padding:8px 11px">Editar</button></div>`).join(""):'<div class="empty">Sin clientes</div>';
+  $("clientList").querySelectorAll("[data-edit-client]").forEach(b=>b.onclick=()=>{
+    const c=state.clients.find(x=>x.id===b.dataset.editClient);if(!c)return;
+    editingClientId=c.id;
+    $("clientName").value=c.name;$("clientPhone").value=c.phone||"";
+    $("saveClient").textContent="Guardar cambios";
+    $("cancelClientEdit").classList.remove("hidden");
+    $("clientMessage").textContent="";
+    document.getElementById("clientName").scrollIntoView({behavior:"smooth",block:"center"});
+  });
+}
 
+function moneyView(v){return currentUser?.role==="admin"?money.format(v):"•••";}
 function clientAccount(clientId){
   const sales=state.notes.filter(n=>n.clientId===clientId).reduce((sum,n)=>sum+Number(n.total||0),0);
   const payments=state.payments.filter(p=>p.clientId===clientId).reduce((sum,p)=>sum+Number(p.amount||0),0);
@@ -1049,10 +1066,10 @@ function renderAccounts(){
   const q=($("accountSearch")?.value||"").trim().toLowerCase();
   const rows=state.clients.map(c=>({client:c,...clientAccount(c.id)})).filter(x=>!q||x.client.name.toLowerCase().includes(q)||(x.client.phone||"").toLowerCase().includes(q));
   const all=state.clients.map(c=>clientAccount(c.id));
-  $("accountsTotalSales").textContent=money.format(all.reduce((s,x)=>s+x.sales,0));
-  $("accountsTotalPayments").textContent=money.format(all.reduce((s,x)=>s+x.payments,0));
-  $("accountsTotalBalance").textContent=money.format(all.reduce((s,x)=>s+x.balance,0));
-  $("accountsTable").innerHTML=rows.length?rows.map(x=>`<tr><td><strong>${esc(x.client.name)}</strong><br><small>${esc(x.client.phone||"Sin teléfono")}</small></td><td class="num">${money.format(x.sales)}</td><td class="num">${money.format(x.payments)}</td><td class="num account-balance ${x.balance>0?"positive":"zero"}">${money.format(x.balance)}</td><td><button class="secondary" data-account-client="${x.client.id}">Ver cuenta</button></td></tr>`).join(""):'<tr><td colspan="5">No hay clientes que coincidan.</td></tr>';
+  $("accountsTotalSales").textContent=moneyView(all.reduce((s,x)=>s+x.sales,0));
+  $("accountsTotalPayments").textContent=moneyView(all.reduce((s,x)=>s+x.payments,0));
+  $("accountsTotalBalance").textContent=moneyView(all.reduce((s,x)=>s+x.balance,0));
+  $("accountsTable").innerHTML=rows.length?rows.map(x=>`<tr><td><strong>${esc(x.client.name)}</strong><br><small>${esc(x.client.phone||"Sin teléfono")}</small></td><td class="num">${moneyView(x.sales)}</td><td class="num">${moneyView(x.payments)}</td><td class="num account-balance ${x.balance>0?"positive":"zero"}">${moneyView(x.balance)}</td><td><button class="secondary" data-account-client="${x.client.id}">Ver cuenta</button></td></tr>`).join(""):'<tr><td colspan="5">No hay clientes que coincidan.</td></tr>';
   document.querySelectorAll("[data-account-client]").forEach(b=>b.onclick=()=>openAccount(b.dataset.accountClient));
   if(selectedAccountClientId&&state.clients.some(c=>c.id===selectedAccountClientId))renderAccountDetail();
 }
@@ -1103,18 +1120,19 @@ function recalcAccountEditor(noteId){
 function renderAccountDetail(){
   const c=state.clients.find(x=>x.id===selectedAccountClientId);if(!c)return;
   const a=clientAccount(c.id);
-  $('accountClientName').textContent=c.name;$('accountClientPhone').textContent=c.phone||'Sin teléfono registrado';$('accountClientBalance').textContent=money.format(a.balance);$('accountClientBalance').style.color=a.balance>0?'var(--bad)':'var(--ok)';
+  $('accountClientName').textContent=c.name;$('accountClientPhone').textContent=c.phone||'Sin teléfono registrado';$('accountClientBalance').textContent=moneyView(a.balance);$('accountClientBalance').style.color=currentUser?.role==="admin"?(a.balance>0?'var(--bad)':'var(--ok)'):'var(--muted)';
+  const printBtn=$('printAccountBtn');if(printBtn)printBtn.classList.toggle('hidden',currentUser?.role!=='admin');
   const movements=[
     ...state.notes.filter(n=>n.clientId===c.id).map(n=>({kind:'sale',id:n.id,date:n.createdAt,amount:Number(n.total||0),title:`Nota de venta ${n.folio}`,items:Array.isArray(n.items)?n.items:[],printStatus:n.printStatus})),
     ...state.payments.filter(p=>p.clientId===c.id).map(p=>({kind:'payment',id:p.id,date:p.createdAt||p.date,amount:Number(p.amount||0),title:`Abono · ${p.method||'Sin método'}`,detail:[p.reference&&`Ref: ${p.reference}`,p.notes].filter(Boolean).join(' · '),items:[]}))
   ].sort((a,b)=>new Date(b.date)-new Date(a.date));
   $('accountMovements').innerHTML=movements.length?movements.map(m=>{
     const products=m.kind==='sale'&&m.items.length
-      ?`<div class="account-products">${m.items.map(i=>`<div class="account-product"><strong>${esc(i.name||'Producto')}</strong><span class="qty">${Number(i.qty||0).toFixed(3)} kg/pza</span><span class="price">${money.format(Number(i.price||0))} c/u</span><span class="amount">${money.format(Number(i.amount||0))}</span></div>`).join('')}</div>`
+      ?`<div class="account-products">${m.items.map(i=>`<div class="account-product"><strong>${esc(i.name||'Producto')}</strong><span class="qty">${Number(i.qty||0).toFixed(3)} kg/pza</span><span class="price">${moneyView(Number(i.price||0))} c/u</span><span class="amount">${moneyView(Number(i.amount||0))}</span></div>`).join('')}</div>`
       :(m.kind==='sale'?'<br><small>Sin detalle de productos guardado.</small>':'');
     const actions=m.kind==='sale'&&currentUser?.role==='admin'?`<div class="account-note-actions"><button class="secondary" data-account-edit-note="${m.id}" style="min-height:38px;padding:8px 11px">✏️ Editar pesada</button></div>`:'';
     const editor=m.kind==='sale'&&currentUser?.role==='admin'&&accountEditingNoteId===m.id?`<div class="account-note-editor" data-account-editor="${m.id}"><strong>Corregir pesada</strong><div style="font-size:12px;color:var(--muted);margin:4px 0 8px">Modifica kilos/cantidad o precio. El importe y el saldo se recalculan automáticamente.</div>${m.items.map((i,index)=>`<div class="account-edit-row" data-account-edit-item="${index}"><strong class="edit-name">${esc(i.name||'Producto')}</strong><div class="account-edit-field"><label>Peso / cantidad</label><input data-field="qty" type="number" min="0" step="0.001" value="${Number(i.qty||0).toFixed(3)}" aria-label="Peso o cantidad de ${esc(i.name||'producto')}"></div><div class="account-edit-field"><label>Precio por kg/pza</label><input data-field="price" type="number" min="0" step="0.01" value="${Number(i.price||0).toFixed(2)}" aria-label="Precio por kilo o pieza de ${esc(i.name||'producto')}"></div><div class="account-edit-amount"><span class="account-edit-amount-label">Importe</span><strong class="edit-amount">${money.format(Number(i.amount||0))}</strong></div></div>`).join('')}<div class="account-edit-total"><span>Nuevo total:</span><span data-account-edit-total>${money.format(m.amount)}</span></div><div class="actions" style="margin-top:12px"><button class="primary" data-account-save-print="${m.id}">Guardar e imprimir</button><button class="secondary" data-account-save-only="${m.id}">Guardar sin imprimir</button><button class="secondary" data-account-cancel-edit>Cancelar</button></div></div>`:'';
-    return `<div class="account-movement"><div><strong>${new Date(m.date).toLocaleDateString('es-MX')}</strong><br><small>${new Date(m.date).toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'})}</small></div><div><strong>${esc(m.title)}</strong>${m.detail?`<br><small>${esc(m.detail)}</small>`:''}${products}${actions}${editor}</div><div class="${m.kind==='payment'?'payment':'credit'}">${m.kind==='payment'?'− ':'+ '}${money.format(m.amount)}</div></div>`
+    return `<div class="account-movement"><div><strong>${new Date(m.date).toLocaleDateString('es-MX')}</strong><br><small>${new Date(m.date).toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'})}</small></div><div><strong>${esc(m.title)}</strong>${m.detail?`<br><small>${esc(m.detail)}</small>`:''}${products}${actions}${editor}</div><div class="${m.kind==='payment'?'payment':'credit'}">${m.kind==='payment'?'− ':'+ '}${moneyView(m.amount)}</div></div>`
   }).join(''):'<div class="empty">Este cliente todavía no tiene movimientos.</div>';
   $('accountMovements').querySelectorAll('[data-account-edit-note]').forEach(b=>b.onclick=()=>accountEditNote(b.dataset.accountEditNote));
   $('accountMovements').querySelectorAll('[data-account-editor] input').forEach(inp=>inp.oninput=()=>recalcAccountEditor(accountEditingNoteId));
@@ -1147,9 +1165,39 @@ $("saveInventoryEntry").onclick=async()=>{const pid=$("invEntryProduct").value,p
 $("saveInventoryExit").onclick=async()=>{const pid=$("invExitProduct").value,p=state.products.find(x=>x.id===pid),unit=$("invExitUnit").value,qty=Number($("invExitQty").value),available=currentAvailable(pid,unit);if(!pid||!qty||qty<=0){$("invExitMessage").textContent="Selecciona producto y captura una cantidad.";$("invExitMessage").className="message error";return}if(qty>available){$("invExitMessage").textContent=`No hay suficiente existencia. Disponible: ${available.toFixed(unit==="kg"?3:0)} ${unit}.`;$("invExitMessage").className="message error";return}const item={id:uid(),type:"salida",date:$("invExitDate").value,productId:pid,productName:p.name,unit,qty,unitCost:0,supplier:"",lot:"",reference:$("invExitRef").value.trim(),reason:$("invExitReason").value,notes:$("invExitNotes").value.trim(),createdAt:new Date().toISOString()};if(CLOUD_ENABLED){const r=await cloudInsert("c360_inventory",{id:item.id,type:item.type,move_date:item.date,product_id:item.productId,product_name:item.productName,unit:item.unit,qty:item.qty,unit_cost:0,supplier:"",lot:"",reference:item.reference,reason:item.reason,notes:item.notes,created_at:item.createdAt});if(r.error)return}else{state.inventory.push(item);renderAll()}["invExitQty","invExitRef","invExitNotes"].forEach(id=>$(id).value="");$("invExitMessage").textContent="Salida guardada correctamente.";$("invExitMessage").className="message ok"};
 $("invFilterProduct").onchange=renderInventoryMovements;$("invFilterType").onchange=renderInventoryMovements;
 
-document.querySelectorAll(".menu button").forEach(b=>b.onclick=()=>{if(currentUser?.role!=="admin"&&!(["notas","cuentas"].includes(b.dataset.module)))return;document.querySelectorAll(".menu button").forEach(x=>x.classList.remove("active"));b.classList.add("active");document.querySelectorAll(".module").forEach(m=>m.classList.add("hidden"));$(b.dataset.module).classList.remove("hidden");const map={notas:["Notas de venta","Captura ventas con precios por cliente."],clientes:["Clientes","Alta y consulta de clientes."],cuentas:["Cuentas de clientes","Consulta saldos y registra abonos."],empleados:["Empleados","Alta, fotografía y administración de perfiles."],productos:["Productos","Catálogo editable de vísceras."],precios:["Precios especiales","Precios distintos por cliente."],inventario:["Inventario","Control de entradas, compras, salidas y existencias."],resumen:["Resumen diario PDF","Hoja imprimible con todos los pedidos del día."]};$("title").textContent=map[b.dataset.module][0];$("subtitle").textContent=map[b.dataset.module][1];if(b.dataset.module==="notas")renderRecentNotes();if(b.dataset.module==="cuentas")renderAccounts();if(b.dataset.module==="productos")renderProducts();if(b.dataset.module==="precios")renderPrices();if(b.dataset.module==="inventario")renderInventory();if(b.dataset.module==="resumen")generateReport()});
+document.querySelectorAll(".menu button").forEach(b=>b.onclick=()=>{if(currentUser?.role!=="admin"&&b.dataset.module!=="notas")return;document.querySelectorAll(".menu button").forEach(x=>x.classList.remove("active"));b.classList.add("active");document.querySelectorAll(".module").forEach(m=>m.classList.add("hidden"));$(b.dataset.module).classList.remove("hidden");const map={notas:["Notas de venta","Captura ventas con precios por cliente."],clientes:["Clientes","Alta y consulta de clientes."],cuentas:["Cuentas de clientes","Consulta saldos y registra abonos."],empleados:["Empleados","Alta, fotografía y administración de perfiles."],productos:["Productos","Catálogo editable de vísceras."],precios:["Precios especiales","Precios distintos por cliente."],inventario:["Inventario","Control de entradas, compras, salidas y existencias."],resumen:["Resumen diario PDF","Hoja imprimible con todos los pedidos del día."]};$("title").textContent=map[b.dataset.module][0];$("subtitle").textContent=map[b.dataset.module][1];if(b.dataset.module==="notas")renderRecentNotes();if(b.dataset.module==="cuentas")renderAccounts();if(b.dataset.module==="productos")renderProducts();if(b.dataset.module==="precios")renderPrices();if(b.dataset.module==="inventario")renderInventory();if(b.dataset.module==="resumen")generateReport()});
 
-$("saveClient").onclick=async()=>{const name=$("clientName").value.trim(),phone=$("clientPhone").value.trim();if(!name){$("clientMessage").textContent="El nombre es obligatorio.";$("clientMessage").className="message error";return}const item={id:uid(),name,phone};if(CLOUD_ENABLED){const r=await cloudInsert("c360_clients",item);if(r.error)return}else{state.clients.push(item);renderAll()}$("clientName").value="";$("clientPhone").value="";$("clientMessage").textContent="Cliente guardado y sincronizado.";$("clientMessage").className="message ok"};
+$("saveClient").onclick=async()=>{
+  const name=$("clientName").value.trim(),phone=$("clientPhone").value.trim();
+  if(!name){$("clientMessage").textContent="El nombre es obligatorio.";$("clientMessage").className="message error";return}
+  if(editingClientId){
+    const id=editingClientId;
+    if(CLOUD_ENABLED){
+      const r=await db.from("c360_clients").update({name,phone}).eq("id",id);
+      if(r.error){$("clientMessage").textContent="No se pudo actualizar el cliente.";$("clientMessage").className="message error";return}
+    }
+    const c=state.clients.find(x=>x.id===id);
+    if(c){c.name=name;c.phone=phone;}
+    state.notes.forEach(n=>{if(n.clientId===id){n.clientName=name;n.clientPhone=phone;}});
+    renderAll();
+    $("clientMessage").textContent="Cliente actualizado.";$("clientMessage").className="message ok";
+  }else{
+    const item={id:uid(),name,phone};
+    if(CLOUD_ENABLED){const r=await cloudInsert("c360_clients",item);if(r.error)return}else{state.clients.push(item);renderAll()}
+    $("clientMessage").textContent="Cliente guardado y sincronizado.";$("clientMessage").className="message ok";
+  }
+  editingClientId=null;
+  $("clientName").value="";$("clientPhone").value="";
+  $("saveClient").textContent="Guardar cliente";
+  $("cancelClientEdit").classList.add("hidden");
+};
+$("cancelClientEdit").onclick=()=>{
+  editingClientId=null;
+  $("clientName").value="";$("clientPhone").value="";
+  $("saveClient").textContent="Guardar cliente";
+  $("cancelClientEdit").classList.add("hidden");
+  $("clientMessage").textContent="";
+};
 $("saveProduct").onclick=async()=>{const name=$("productName").value.trim(),price=Number($("productPrice").value||0);if(!name){$("productMessage").textContent="Escribe el nombre del producto.";$("productMessage").className="message error";return}const item={id:uid(),name,price};if(CLOUD_ENABLED){const r=await cloudInsert("c360_products",item);if(r.error)return}else{state.products.push(item);renderAll()}$("productName").value="";$("productPrice").value="";$("productMessage").textContent="Producto guardado y sincronizado.";$("productMessage").className="message ok"};
 $("addItem").onclick=()=>{const cid=$("noteClient").value,pid=$("noteProduct").value,qty=Number($("noteQty").value),price=Number($("notePrice").value),p=state.products.find(x=>x.id===pid);if(!cid||!qty||qty<=0){$("noteMessage").textContent="Selecciona cliente y captura cantidad.";$("noteMessage").className="message error";return}state.items.push({id:uid(),productId:pid,name:p.name,qty,price,amount:qty*price});$("noteQty").value="";renderItems()};
 async function saveCurrentNote(shouldPrint){
@@ -1195,7 +1243,10 @@ $("accountSearch").oninput=renderAccounts;
 $("savePayment").onclick=async()=>{
   const clientId=selectedAccountClientId,amount=Number($("paymentAmount").value||0),date=$("paymentDate").value;
   if(!clientId||!amount||amount<=0||!date){$("paymentMessage").textContent="Selecciona un cliente y captura fecha y monto del abono.";$("paymentMessage").className="message error";return}
-  const balance=clientAccount(clientId).balance;if(amount>balance&&balance>0&&!confirm(`El abono ${money.format(amount)} es mayor al saldo ${money.format(balance)}. ¿Deseas registrarlo de todas formas?`))return;
+  const balance=clientAccount(clientId).balance;
+  if(currentUser?.role==='admin'){
+    if(amount>balance&&balance>0&&!confirm(`El abono ${money.format(amount)} es mayor al saldo ${money.format(balance)}. ¿Deseas registrarlo de todas formas?`))return;
+  }
   const item={id:uid(),clientId,amount,date,method:$("paymentMethod").value,reference:$("paymentReference").value.trim(),notes:$("paymentNotes").value.trim(),createdAt:new Date().toISOString(),createdBy:currentUser?.name||""};
   if(CLOUD_ENABLED){
     const r=await cloudInsert("c360_payments",{id:item.id,client_id:item.clientId,amount:item.amount,payment_date:item.date,method:item.method,reference:item.reference,notes:item.notes,created_at:item.createdAt,created_by:item.createdBy});
@@ -1204,6 +1255,27 @@ $("savePayment").onclick=async()=>{
   }else{state.payments.unshift(item)}
   localStorage.setItem("c360_payments_local",JSON.stringify(state.payments));
   $("paymentAmount").value="";$("paymentReference").value="";$("paymentNotes").value="";$("paymentMessage").textContent="Abono registrado correctamente.";$("paymentMessage").className="message ok";renderAccounts();localBackup();
+};
+function buildAccountStatementHtml(clientId){
+  const c=state.clients.find(x=>x.id===clientId);if(!c)return"";
+  const a=clientAccount(clientId);
+  const movements=[
+    ...state.notes.filter(n=>n.clientId===c.id).map(n=>({kind:'sale',date:n.createdAt,amount:Number(n.total||0),title:`Nota de venta ${n.folio}`,items:Array.isArray(n.items)?n.items:[]})),
+    ...state.payments.filter(p=>p.clientId===c.id).map(p=>({kind:'payment',date:p.createdAt||p.date,amount:Number(p.amount||0),title:`Abono · ${p.method||'Sin método'}`,detail:[p.reference&&`Ref: ${p.reference}`,p.notes].filter(Boolean).join(' · ')}))
+  ].sort((x,y)=>new Date(x.date)-new Date(y.date));
+  let running=0;
+  const rows=movements.map(m=>{
+    running+= m.kind==='sale'?m.amount:-m.amount;
+    return `<tr><td>${new Date(m.date).toLocaleDateString('es-MX')}</td><td>${esc(m.title)}${m.detail?` · ${esc(m.detail)}`:''}</td><td class="num">${m.kind==='sale'?money.format(m.amount):''}</td><td class="num">${m.kind==='payment'?money.format(m.amount):''}</td><td class="num">${money.format(running)}</td></tr>`;
+  }).join('');
+  return `<div class="pdf-header"><div><h1>Estado de cuenta</h1><p>Carnicería 360° — ${esc(c.name)}</p></div><div class="pdf-meta"><strong>${esc(c.phone||'Sin teléfono')}</strong><br>Generado ${new Date().toLocaleString('es-MX')}</div></div>
+    <div class="pdf-summary"><div class="pdf-card"><small>Ventas totales</small><strong>${money.format(a.sales)}</strong></div><div class="pdf-card"><small>Abonos totales</small><strong>${money.format(a.payments)}</strong></div><div class="pdf-card"><small>Saldo pendiente</small><strong>${money.format(a.balance)}</strong></div></div>
+    <table class="pdf-table"><thead><tr><th>Fecha</th><th>Concepto</th><th>Cargo</th><th>Abono</th><th>Saldo</th></tr></thead><tbody>${rows||'<tr><td colspan="5">Sin movimientos.</td></tr>'}</tbody></table>`;
+}
+document.getElementById("printAccountBtn").onclick=()=>{
+  if(currentUser?.role!=='admin'||!selectedAccountClientId)return;
+  $("accountPdfSheet").innerHTML=buildAccountStatementHtml(selectedAccountClientId);
+  window.print();
 };
 $("generateReport").onclick=generateReport;$("printReport").onclick=()=>window.print();
 $("reportDate").value=new Date().toISOString().slice(0,10);$("paymentDate").value=new Date().toISOString().slice(0,10);$("invEntryDate").value=new Date().toISOString().slice(0,10);$("invExitDate").value=new Date().toISOString().slice(0,10);
