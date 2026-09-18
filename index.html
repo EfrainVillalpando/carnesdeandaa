@@ -295,6 +295,7 @@ th{font-size:12px;text-transform:uppercase;color:var(--muted)}
       <button class="active" data-module="notas">🧾 <span>Notas</span></button>
       <button data-module="clientes">👥 <span>Clientes</span></button>
       <button data-module="cuentas">💳 <span>Cuentas</span></button>
+      <button data-module="abonos">💵 <span>Abonos</span></button>
       <button data-module="empleados">🪪 <span>Empleados</span></button>
       <button data-module="productos">🥩 <span>Productos</span></button>
       <button data-module="precios">💲 <span>Precios</span></button>
@@ -374,6 +375,21 @@ th{font-size:12px;text-transform:uppercase;color:var(--muted)}
         <h3 style="margin-top:20px">Historial de movimientos</h3>
         <div id="accountMovements"></div>
       </div>
+    </section>
+
+    <section id="abonos" class="module panel hidden">
+      <h2>Registrar abono</h2>
+      <p>Registra el pago de un cliente. Aquí no se muestra su saldo ni su historial.</p>
+      <div class="grid">
+        <div class="field"><label>Cliente</label><select id="abonoClient"></select></div>
+        <div class="field"><label>Fecha del abono</label><input id="abonoDate" type="date"></div>
+        <div class="field"><label>Monto del abono</label><input id="abonoAmount" type="number" min="0" step="0.01" placeholder="0.00"></div>
+        <div class="field"><label>Forma de pago</label><select id="abonoMethod"><option>Efectivo</option><option>Transferencia</option><option>Depósito</option><option>Tarjeta</option><option>Otro</option></select></div>
+        <div class="field"><label>Referencia</label><input id="abonoReference" placeholder="Opcional"></div>
+        <div class="field full"><label>Observaciones</label><textarea id="abonoNotes" placeholder="Opcional"></textarea></div>
+        <div class="field full"><button id="saveAbono" class="primary">Registrar abono</button></div>
+      </div>
+      <div id="abonoMessage" class="message"></div>
     </section>
 
     <section id="empleados" class="module panel hidden">
@@ -675,7 +691,7 @@ function enterApp(user){
 function applyPermissions(){
   const admin=currentUser?.role==="admin";
   document.querySelectorAll('.menu button').forEach(btn=>{
-    const allowed=admin||btn.dataset.module==="notas";
+    const allowed=admin||btn.dataset.module==="notas"||btn.dataset.module==="abonos";
     btn.classList.toggle("hidden",!allowed);
   });
   if(!admin){
@@ -992,9 +1008,16 @@ $("cancelEmployeeEdit").onclick=()=>{
 
 
 function clientOptions(){return '<option value="">Selecciona cliente</option>'+state.clients.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join("")}
+function renderAbonoClientSelect(){
+  const sel=$("abonoClient");if(!sel)return;
+  const prev=sel.value;
+  sel.innerHTML=clientOptions();
+  if(state.clients.some(x=>x.id===prev))sel.value=prev;
+}
 function refreshSelects(){
   const selected={nc:$("noteClient").value,pc:$("priceClient").value,np:$("noteProduct").value,ie:$("invEntryProduct").value,ix:$("invExitProduct").value,ifp:$("invFilterProduct").value};
   $("noteClient").innerHTML=clientOptions();$("priceClient").innerHTML=clientOptions();
+  renderAbonoClientSelect();
   const productOptions=state.products.map(p=>`<option value="${p.id}">${esc(p.name)}</option>`).join("");
   $("noteProduct").innerHTML=productOptions;["invEntryProduct","invExitProduct"].forEach(id=>$(id).innerHTML=productOptions);
   $("invFilterProduct").innerHTML='<option value="">Todos los productos</option>'+productOptions;
@@ -1166,7 +1189,7 @@ $("saveInventoryEntry").onclick=async()=>{const pid=$("invEntryProduct").value,p
 $("saveInventoryExit").onclick=async()=>{const pid=$("invExitProduct").value,p=state.products.find(x=>x.id===pid),unit=$("invExitUnit").value,qty=Number($("invExitQty").value),available=currentAvailable(pid,unit);if(!pid||!qty||qty<=0){$("invExitMessage").textContent="Selecciona producto y captura una cantidad.";$("invExitMessage").className="message error";return}if(qty>available){$("invExitMessage").textContent=`No hay suficiente existencia. Disponible: ${available.toFixed(unit==="kg"?3:0)} ${unit}.`;$("invExitMessage").className="message error";return}const item={id:uid(),type:"salida",date:$("invExitDate").value,productId:pid,productName:p.name,unit,qty,unitCost:0,supplier:"",lot:"",reference:$("invExitRef").value.trim(),reason:$("invExitReason").value,notes:$("invExitNotes").value.trim(),createdAt:new Date().toISOString()};if(CLOUD_ENABLED){const r=await cloudInsert("c360_inventory",{id:item.id,type:item.type,move_date:item.date,product_id:item.productId,product_name:item.productName,unit:item.unit,qty:item.qty,unit_cost:0,supplier:"",lot:"",reference:item.reference,reason:item.reason,notes:item.notes,created_at:item.createdAt});if(r.error)return}else{state.inventory.push(item);renderAll()}["invExitQty","invExitRef","invExitNotes"].forEach(id=>$(id).value="");$("invExitMessage").textContent="Salida guardada correctamente.";$("invExitMessage").className="message ok"};
 $("invFilterProduct").onchange=renderInventoryMovements;$("invFilterType").onchange=renderInventoryMovements;
 
-document.querySelectorAll(".menu button").forEach(b=>b.onclick=()=>{if(currentUser?.role!=="admin"&&b.dataset.module!=="notas")return;document.querySelectorAll(".menu button").forEach(x=>x.classList.remove("active"));b.classList.add("active");document.querySelectorAll(".module").forEach(m=>m.classList.add("hidden"));$(b.dataset.module).classList.remove("hidden");const map={notas:["Notas de venta","Captura ventas con precios por cliente."],clientes:["Clientes","Alta y consulta de clientes."],cuentas:["Cuentas de clientes","Consulta saldos y registra abonos."],empleados:["Empleados","Alta, fotografía y administración de perfiles."],productos:["Productos","Catálogo editable de vísceras."],precios:["Precios especiales","Precios distintos por cliente."],inventario:["Inventario","Control de entradas, compras, salidas y existencias."],resumen:["Resumen diario PDF","Hoja imprimible con todos los pedidos del día."]};$("title").textContent=map[b.dataset.module][0];$("subtitle").textContent=map[b.dataset.module][1];if(b.dataset.module==="notas")renderRecentNotes();if(b.dataset.module==="cuentas")renderAccounts();if(b.dataset.module==="productos")renderProducts();if(b.dataset.module==="precios")renderPrices();if(b.dataset.module==="inventario")renderInventory();if(b.dataset.module==="resumen")generateReport()});
+document.querySelectorAll(".menu button").forEach(b=>b.onclick=()=>{if(currentUser?.role!=="admin"&&!(["notas","abonos"].includes(b.dataset.module)))return;document.querySelectorAll(".menu button").forEach(x=>x.classList.remove("active"));b.classList.add("active");document.querySelectorAll(".module").forEach(m=>m.classList.add("hidden"));$(b.dataset.module).classList.remove("hidden");const map={notas:["Notas de venta","Captura ventas con precios por cliente."],clientes:["Clientes","Alta y consulta de clientes."],cuentas:["Cuentas de clientes","Consulta saldos y registra abonos."],abonos:["Registrar abono","Registra pagos de clientes sin ver su saldo."],empleados:["Empleados","Alta, fotografía y administración de perfiles."],productos:["Productos","Catálogo editable de vísceras."],precios:["Precios especiales","Precios distintos por cliente."],inventario:["Inventario","Control de entradas, compras, salidas y existencias."],resumen:["Resumen diario PDF","Hoja imprimible con todos los pedidos del día."]};$("title").textContent=map[b.dataset.module][0];$("subtitle").textContent=map[b.dataset.module][1];if(b.dataset.module==="notas")renderRecentNotes();if(b.dataset.module==="cuentas")renderAccounts();if(b.dataset.module==="abonos")renderAbonoClientSelect();if(b.dataset.module==="productos")renderProducts();if(b.dataset.module==="precios")renderPrices();if(b.dataset.module==="inventario")renderInventory();if(b.dataset.module==="resumen")generateReport()});
 
 $("saveClient").onclick=async()=>{
   const name=$("clientName").value.trim(),phone=$("clientPhone").value.trim();
@@ -1278,6 +1301,22 @@ document.getElementById("printAccountBtn").onclick=()=>{
   $("accountPdfSheet").innerHTML=buildAccountStatementHtml(selectedAccountClientId);
   window.print();
 };
+$("saveAbono").onclick=async()=>{
+  const clientId=$("abonoClient").value,amount=Number($("abonoAmount").value||0),date=$("abonoDate").value;
+  const msg=$("abonoMessage");
+  if(!clientId||!amount||amount<=0||!date){msg.textContent="Selecciona un cliente y captura fecha y monto del abono.";msg.className="message error";return}
+  const item={id:uid(),clientId,amount,date,method:$("abonoMethod").value,reference:$("abonoReference").value.trim(),notes:$("abonoNotes").value.trim(),createdAt:new Date().toISOString(),createdBy:currentUser?.name||""};
+  if(CLOUD_ENABLED){
+    const r=await cloudInsert("c360_payments",{id:item.id,client_id:item.clientId,amount:item.amount,payment_date:item.date,method:item.method,reference:item.reference,notes:item.notes,created_at:item.createdAt,created_by:item.createdBy});
+    if(r.error){msg.textContent="No se pudo registrar el abono. Verifica que exista la tabla c360_payments en Supabase.";msg.className="message error";return}
+    state.payments.unshift(item);
+  }else{state.payments.unshift(item)}
+  localStorage.setItem("c360_payments_local",JSON.stringify(state.payments));
+  $("abonoAmount").value="";$("abonoReference").value="";$("abonoNotes").value="";
+  msg.textContent="Abono registrado correctamente.";msg.className="message ok";
+  renderAccounts();localBackup();
+};
+$("abonoDate").value=new Date().toISOString().slice(0,10);
 $("generateReport").onclick=generateReport;$("printReport").onclick=()=>window.print();
 $("reportDate").value=new Date().toISOString().slice(0,10);$("paymentDate").value=new Date().toISOString().slice(0,10);$("invEntryDate").value=new Date().toISOString().slice(0,10);$("invExitDate").value=new Date().toISOString().slice(0,10);
 async function sincronizarPendientes(){
