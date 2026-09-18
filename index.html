@@ -1017,17 +1017,18 @@ function renderItems(){
   });
 }
 function noteStatusText(status){return status==="pendiente"?"Pendiente de impresión":status==="impreso"?"Impresa":status==="sin_imprimir"?"Guardada sin imprimir":status==="procesando"?"Imprimiendo":status||"Guardada"}
+function puedeEditarNota(n){return currentUser?.role==="admin"||(n.createdBy&&n.createdBy===currentUser?.name);}
 function renderRecentNotes(){
   const el=$("recentNotes");if(!el)return;
   let notes=[...state.notes].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
   if(currentUser?.role!=="admin")notes=notes.filter(n=>!n.createdBy||n.createdBy===currentUser?.name);
   notes=notes.slice(0,20);
-  el.innerHTML=notes.length?notes.map(n=>`<div class="recent-note"><div class="recent-note-head"><div><strong>${esc(n.folio)}</strong> · ${esc(n.clientName)}<div class="recent-note-meta">${new Date(n.createdAt).toLocaleString("es-MX")} · ${money.format(n.total)}</div></div><div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap;justify-content:flex-end"><span class="note-status">${esc(noteStatusText(n.printStatus))}</span>${currentUser?.role==="admin"?`<button class="secondary" data-edit-note="${n.id}" style="min-height:38px;padding:8px 11px">Editar</button>`:""}</div></div><div class="recent-note-items">${(n.items||[]).map(i=>`<div class="recent-note-item"><span>${esc(i.name)}</span><span>${Number(i.qty).toFixed(3)} × ${money.format(i.price)}</span><span><strong>${money.format(i.amount)}</strong></span></div>`).join("")}</div></div>`).join(""):'<div class="empty">Todavía no hay notas recientes.</div>';
+  el.innerHTML=notes.length?notes.map(n=>`<div class="recent-note"><div class="recent-note-head"><div><strong>${esc(n.folio)}</strong> · ${esc(n.clientName)}<div class="recent-note-meta">${new Date(n.createdAt).toLocaleString("es-MX")} · ${money.format(n.total)}</div></div><div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap;justify-content:flex-end"><span class="note-status">${esc(noteStatusText(n.printStatus))}</span>${puedeEditarNota(n)?`<button class="secondary" data-edit-note="${n.id}" style="min-height:38px;padding:8px 11px">Editar</button>`:""}</div></div><div class="recent-note-items">${(n.items||[]).map(i=>`<div class="recent-note-item"><span>${esc(i.name)}</span><span>${Number(i.qty).toFixed(3)} × ${money.format(i.price)}</span><span><strong>${money.format(i.amount)}</strong></span></div>`).join("")}</div></div>`).join(""):'<div class="empty">Todavía no hay notas recientes.</div>';
   el.querySelectorAll("[data-edit-note]").forEach(b=>b.onclick=()=>startEditNote(b.dataset.editNote));
 }
 function startEditNote(id){
-  if(currentUser?.role!=="admin"){alert("Solo el administrador puede editar notas de venta.");return}
   const n=state.notes.find(x=>x.id===id);if(!n)return;
+  if(!puedeEditarNota(n)){alert("Solo puedes editar tus propias notas.");return}
   editingNoteId=id;
   $("noteClient").value=n.clientId;
   state.items=(n.items||[]).map(i=>({id:uid(),productId:i.productId,name:i.name,qty:Number(i.qty||0),price:Number(i.price||0),amount:Number(i.amount??Number(i.qty||0)*Number(i.price||0))}));
@@ -1207,8 +1208,8 @@ async function saveCurrentNote(shouldPrint){
   const total=state.items.reduce((sum,i)=>sum+Number(i.qty)*Number(i.price),0);
   const normalizedItems=state.items.map(i=>({...i,qty:Number(i.qty),price:Number(i.price),amount:Number(i.qty)*Number(i.price)}));
   if(editingNoteId){
-    if(currentUser?.role!=="admin"){$("noteMessage").textContent="Solo el administrador puede editar notas de venta.";$("noteMessage").className="message error";cancelNoteEditing(true);return}
     const old=state.notes.find(n=>n.id===editingNoteId);if(!old)return;
+    if(!puedeEditarNota(old)){$("noteMessage").textContent="Solo puedes editar tus propias notas.";$("noteMessage").className="message error";cancelNoteEditing(true);return}
     const patch={client_id:cid,client_name:c.name,client_phone:c.phone||"",items:normalizedItems,total};
     if(shouldPrint){patch.print_status="pendiente";patch.print_attempts=0;patch.print_error=""}
     if(CLOUD_ENABLED){
