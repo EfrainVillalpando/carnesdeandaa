@@ -1124,8 +1124,9 @@ function renderRecentNotes(){
   let notes=[...state.notes].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
   if(currentUser?.role!=="admin")notes=notes.filter(n=>!n.createdBy||n.createdBy===currentUser?.name);
   notes=notes.slice(0,20);
-  el.innerHTML=notes.length?notes.map(n=>`<div class="recent-note"><div class="recent-note-head"><div><strong>${esc(n.folio)}</strong> · ${esc(n.clientName)}<div class="recent-note-meta">${new Date(n.createdAt).toLocaleString("es-MX")} · ${money.format(n.total)}</div></div><div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap;justify-content:flex-end"><span class="note-status">${esc(noteStatusText(n.printStatus))}</span>${puedeEditarNota(n)?`<button class="secondary" data-edit-note="${n.id}" style="min-height:38px;padding:8px 11px">Editar</button>`:""}</div></div><div class="recent-note-items">${(n.items||[]).map(i=>`<div class="recent-note-item"><span>${esc(i.name)}</span><span>${Number(i.qty).toFixed(3)} × ${money.format(i.price)}</span><span><strong>${money.format(i.amount)}</strong></span></div>`).join("")}</div></div>`).join(""):'<div class="empty">Todavía no hay notas recientes.</div>';
+  el.innerHTML=notes.length?notes.map(n=>`<div class="recent-note"><div class="recent-note-head"><div><strong>${esc(n.folio)}</strong> · ${esc(n.clientName)}<div class="recent-note-meta">${new Date(n.createdAt).toLocaleString("es-MX")} · ${money.format(n.total)}</div></div><div style="display:flex;gap:7px;align-items:center;flex-wrap:wrap;justify-content:flex-end"><span class="note-status">${esc(noteStatusText(n.printStatus))}</span>${puedeEditarNota(n)?`<button class="secondary" data-edit-note="${n.id}" style="min-height:38px;padding:8px 11px">Editar</button>`:""}${currentUser?.role==="admin"?`<button class="danger" data-delete-note="${n.id}" style="min-height:38px;padding:8px 11px">Eliminar</button>`:""}</div></div><div class="recent-note-items">${(n.items||[]).map(i=>`<div class="recent-note-item"><span>${esc(i.name)}</span><span>${Number(i.qty).toFixed(3)} × ${money.format(i.price)}</span><span><strong>${money.format(i.amount)}</strong></span></div>`).join("")}</div></div>`).join(""):'<div class="empty">Todavía no hay notas recientes.</div>';
   el.querySelectorAll("[data-edit-note]").forEach(b=>b.onclick=()=>startEditNote(b.dataset.editNote));
+  el.querySelectorAll("[data-delete-note]").forEach(b=>b.onclick=()=>deleteNote(b.dataset.deleteNote));
 }
 function startEditNote(id){
   const n=state.notes.find(x=>x.id===id);if(!n)return;
@@ -1141,6 +1142,19 @@ function cancelNoteEditing(clearItems=true){
   editingNoteId="";$("noteEditBanner").classList.remove("active");$("editingNoteFolio").textContent="";
   $("saveNote").textContent="Guardar e imprimir";$("saveNoteNoPrint").textContent="Guardar sin imprimir";
   if(clearItems){state.items=[];renderItems()}
+}
+async function deleteNote(id){
+  if(currentUser?.role!=="admin"){alert("Solo el administrador puede eliminar notas de venta.");return}
+  const n=state.notes.find(x=>x.id===id);if(!n)return;
+  if(!confirm(`¿Eliminar la nota ${n.folio} de ${n.clientName} por ${money.format(n.total)}? Esto también descuenta esa venta de la cuenta del cliente. No se puede deshacer.`))return;
+  if(CLOUD_ENABLED){
+    const r=await db.from("c360_notes").delete().eq("id",id);
+    if(r.error){alert(`No se pudo eliminar la nota: ${r.error.message||"revisa los permisos de Supabase."}`);return}
+  }
+  state.notes=state.notes.filter(x=>x.id!==id);
+  if(editingNoteId===id)cancelNoteEditing(true);
+  if(accountEditingNoteId===id)accountEditingNoteId="";
+  renderRecentNotes();renderAccounts();generateReport();localBackup();
 }
 let editingClientId=null;
 function renderClients(){
@@ -1232,11 +1246,12 @@ function renderAccountDetail(){
     const products=m.kind==='sale'&&m.items.length
       ?`<div class="account-products">${m.items.map(i=>`<div class="account-product"><strong>${esc(i.name||'Producto')}</strong><span class="qty">${Number(i.qty||0).toFixed(3)} kg/pza</span><span class="price">${moneyView(Number(i.price||0))} c/u</span><span class="amount">${moneyView(Number(i.amount||0))}</span></div>`).join('')}</div>`
       :(m.kind==='sale'?'<br><small>Sin detalle de productos guardado.</small>':'');
-    const actions=m.kind==='sale'&&currentUser?.role==='admin'?`<div class="account-note-actions"><button class="secondary" data-account-edit-note="${m.id}" style="min-height:38px;padding:8px 11px">✏️ Editar pesada</button></div>`:'';
+    const actions=m.kind==='sale'&&currentUser?.role==='admin'?`<div class="account-note-actions"><button class="secondary" data-account-edit-note="${m.id}" style="min-height:38px;padding:8px 11px">✏️ Editar pesada</button><button class="danger" data-account-delete-note="${m.id}" style="min-height:38px;padding:8px 11px">🗑️ Eliminar</button></div>`:'';
     const editor=m.kind==='sale'&&currentUser?.role==='admin'&&accountEditingNoteId===m.id?`<div class="account-note-editor" data-account-editor="${m.id}"><strong>Corregir pesada</strong><div style="font-size:12px;color:var(--muted);margin:4px 0 8px">Modifica kilos/cantidad o precio. El importe y el saldo se recalculan automáticamente.</div>${m.items.map((i,index)=>`<div class="account-edit-row" data-account-edit-item="${index}"><strong class="edit-name">${esc(i.name||'Producto')}</strong><div class="account-edit-field"><label>Peso / cantidad</label><input data-field="qty" type="number" min="0" step="0.001" value="${Number(i.qty||0).toFixed(3)}" aria-label="Peso o cantidad de ${esc(i.name||'producto')}"></div><div class="account-edit-field"><label>Precio por kg/pza</label><input data-field="price" type="number" min="0" step="0.01" value="${Number(i.price||0).toFixed(2)}" aria-label="Precio por kilo o pieza de ${esc(i.name||'producto')}"></div><div class="account-edit-amount"><span class="account-edit-amount-label">Importe</span><strong class="edit-amount">${money.format(Number(i.amount||0))}</strong></div></div>`).join('')}<div class="account-edit-total"><span>Nuevo total:</span><span data-account-edit-total>${money.format(m.amount)}</span></div><div class="actions" style="margin-top:12px"><button class="primary" data-account-save-print="${m.id}">Guardar e imprimir</button><button class="secondary" data-account-save-only="${m.id}">Guardar sin imprimir</button><button class="secondary" data-account-cancel-edit>Cancelar</button></div></div>`:'';
     return `<div class="account-movement"><div><strong>${new Date(m.date).toLocaleDateString('es-MX')}</strong><br><small>${new Date(m.date).toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'})}</small></div><div><strong>${esc(m.title)}</strong>${m.detail?`<br><small>${esc(m.detail)}</small>`:''}${products}${actions}${editor}</div><div class="${m.kind==='payment'?'payment':'credit'}">${m.kind==='payment'?'− ':'+ '}${moneyView(m.amount)}</div></div>`
   }).join(''):'<div class="empty">Este cliente todavía no tiene movimientos.</div>';
   $('accountMovements').querySelectorAll('[data-account-edit-note]').forEach(b=>b.onclick=()=>accountEditNote(b.dataset.accountEditNote));
+  $('accountMovements').querySelectorAll('[data-account-delete-note]').forEach(b=>b.onclick=()=>deleteNote(b.dataset.accountDeleteNote));
   $('accountMovements').querySelectorAll('[data-account-editor] input').forEach(inp=>inp.oninput=()=>recalcAccountEditor(accountEditingNoteId));
   $('accountMovements').querySelectorAll('[data-account-save-print]').forEach(b=>b.onclick=()=>saveAccountNoteEdit(b.dataset.accountSavePrint,true));
   $('accountMovements').querySelectorAll('[data-account-save-only]').forEach(b=>b.onclick=()=>saveAccountNoteEdit(b.dataset.accountSaveOnly,false));
