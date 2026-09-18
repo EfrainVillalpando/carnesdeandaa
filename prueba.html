@@ -787,8 +787,8 @@ const money=new Intl.NumberFormat("es-MX",{style:"currency",currency:"MXN"});
    1) Crea el proyecto y ejecuta el archivo SQL entregado.
    2) Copia aquí Project URL y anon public key.
    ========================================================= */
-const SUPABASE_URL="https://bjebybdqcqscouxlinfd.supabase.co";
-const SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJqZWJ5YmRxY3FzY291eGxpbmZkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTYzMjQ3MTksImV4cCI6MjA3MTkwMDcxOX0.mQgWtiYEyJTiF04pdcLv63SqPNrU1Iehws0vKqr82O0";
+const SUPABASE_URL="https://blrluyfarjdprlkdgprk.supabase.co";
+const SUPABASE_ANON_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJscmx1eWZhcmpkcHJsa2RncHJrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk2OTE1MDcsImV4cCI6MjEwNTI2NzUwN30.Ogy6jrpuEZzcjDL600Nf98y_EFrann6yUtS_LjuzNfI";
 const CLOUD_ENABLED=SUPABASE_URL.startsWith("https://")&&!SUPABASE_URL.includes("PEGA_AQUI")&&SUPABASE_ANON_KEY.length>40;
 const db=CLOUD_ENABLED?window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY):null;
 
