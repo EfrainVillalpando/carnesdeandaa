@@ -861,7 +861,16 @@ async function loadCloudData(showStatus=true){
   state.clients=clients.data.map(x=>({id:x.id,name:x.name,phone:x.phone||""}));
   state.products=products.data.map(x=>({id:x.id,name:x.name,price:Number(x.price||0)}));
   state.prices={}; prices.data.forEach(x=>{state.prices[x.client_id]??={};state.prices[x.client_id][x.product_id]=Number(x.price)});
+  // Conserva notas capturadas sin conexión para poder subirlas después.
+  let pendingLocalNotes=[];
+  try{
+    const backup=JSON.parse(localStorage.getItem("c360_realtime_backup")||"null");
+    pendingLocalNotes=(backup?.notes||[]).filter(n=>n.pendingSync);
+  }catch(_){ pendingLocalNotes=[]; }
   state.notes=notes.data.map(x=>({id:x.id,folio:x.folio,clientId:x.client_id,clientName:x.client_name,clientPhone:x.client_phone||"",items:x.items||[],total:Number(x.total||0),createdAt:x.created_at,printStatus:x.print_status||"pendiente",createdBy:x.created_by||""}));
+  for(const n of pendingLocalNotes){
+    if(!state.notes.some(x=>x.id===n.id)) state.notes.unshift(n);
+  }
   state.payments=payments.error?[]:(payments.data||[]).map(x=>({id:x.id,clientId:x.client_id,amount:Number(x.amount||0),date:x.payment_date,method:x.method||"",reference:x.reference||"",notes:x.notes||"",createdAt:x.created_at||x.payment_date,createdBy:x.created_by||""}));
   state.inventory=inventory.data.map(x=>({id:x.id,type:x.type,date:x.move_date,productId:x.product_id,productName:x.product_name,unit:x.unit,qty:Number(x.qty),unitCost:Number(x.unit_cost||0),supplier:x.supplier||"",lot:x.lot||"",reference:x.reference||"",reason:x.reason||"",notes:x.notes||"",createdAt:x.created_at}));
   if(!state.products.length){
@@ -883,9 +892,21 @@ function startRealtime(){
     .on("postgres_changes",{event:"*",schema:"public",table:"c360_inventory"},scheduleReload)
     .subscribe(status=>{if(status==="SUBSCRIBED")setSync("Conectado en tiempo real","ok")});
 }
+function esErrorDeRedSupabase(err){
+  const msg=String(err?.message||err||"").toLowerCase();
+  return msg.includes("failed to fetch")||msg.includes("fetch failed")||msg.includes("networkerror")||msg.includes("network request failed")||msg.includes("load failed");
+}
 async function cloudInsert(table,row){
   if(!CLOUD_ENABLED)return {error:null};
-  const r=await db.from(table).insert(row);if(r.error)setSync("Error al guardar","error");return r;
+  try{
+    const r=await db.from(table).insert(row);
+    if(r.error)setSync(esErrorDeRedSupabase(r.error)?"Sin conexión a Supabase":"Error al guardar","error");
+    return r;
+  }catch(e){
+    console.warn("No se pudo conectar con Supabase:",e);
+    setSync("Sin conexión a Supabase","error");
+    return {error:{message:e?.message||String(e),network:true}};
+  }
 }
 
 
@@ -1344,7 +1365,17 @@ async function saveCurrentNote(shouldPrint){
       items:item.items,total:item.total,created_at:item.createdAt,created_by:item.createdBy,
       print_status:item.printStatus,print_attempts:0
     });
-    if(r.error){$("noteMessage").textContent=`No se pudo guardar la nota: ${r.error.message||"error de Supabase"}`;$("noteMessage").className="message error";return}
+    if(r.error){
+      if(esErrorDeRedSupabase(r.error)||r.error.network){
+        item.pendingSync=true;
+        state.notes.unshift(item);state.items=[];renderItems();renderRecentNotes();renderAccounts();generateReport();localBackup();
+        $("noteMessage").textContent="Sin conexión con Supabase. La nota quedó guardada en este dispositivo y está pendiente de sincronizar.";
+        $("noteMessage").className="message";
+        $("dispatchMessage").textContent=shouldPrint?"Cuando vuelva la conexión, pulsa 🔄 Sincronizar. Entonces se enviará a la cola de impresión.":"Cuando vuelva la conexión, pulsa 🔄 Sincronizar para subir esta venta.";
+        return;
+      }
+      $("noteMessage").textContent=`No se pudo guardar la nota: ${r.error.message||"error de Supabase"}`;$("noteMessage").className="message error";return
+    }
   }
   state.notes.unshift(item);state.items=[];renderItems();renderRecentNotes();renderAccounts();generateReport();localBackup();
   $("noteMessage").textContent=shouldPrint?"Nota de venta guardada correctamente.":"Nota de venta guardada sin imprimir.";$("noteMessage").className="message ok";
@@ -1505,22 +1536,42 @@ $("importBackupBtn").onclick=async()=>{
 $("generateReport").onclick=generateReport;$("printReport").onclick=()=>window.print();
 $("reportDate").value=new Date().toISOString().slice(0,10);$("paymentDate").value=new Date().toISOString().slice(0,10);$("invEntryDate").value=new Date().toISOString().slice(0,10);$("invExitDate").value=new Date().toISOString().slice(0,10);
 async function sincronizarPendientes(){
-  if(!CLOUD_ENABLED)return;
+  if(!CLOUD_ENABLED)return {ok:false,notes:0,users:0};
+  let syncedUsers=0,syncedNotes=0,failed=false;
   const pendientes=users.filter(u=>u.role==="operator"&&u.pendingSync);
   for(const u of pendientes){
     try{
-      const r=await db.from("c360_users").insert({id:u.id,name:u.name,role:"operator",photo:u.photo||""});
+      const r=await db.from("c360_users").upsert({id:u.id,name:u.name,role:"operator",photo:u.photo||""},{onConflict:"id"});
       if(r.error) throw r.error;
-      delete u.pendingSync;
-    }catch(e){ console.warn("Sigue sin poder subirse:",u.name,e); }
+      delete u.pendingSync;syncedUsers++;
+    }catch(e){ failed=true;console.warn("Sigue sin poder subirse:",u.name,e); }
+  }
+  const pendingNotes=state.notes.filter(n=>n.pendingSync);
+  for(const n of pendingNotes){
+    try{
+      const row={
+        id:n.id,folio:n.folio,client_id:n.clientId,client_name:n.clientName,client_phone:n.clientPhone||"",
+        items:n.items||[],total:Number(n.total||0),created_at:n.createdAt,created_by:n.createdBy||"",
+        print_status:n.printStatus||"pendiente",print_attempts:0
+      };
+      const r=await db.from("c360_notes").upsert(row,{onConflict:"id"});
+      if(r.error) throw r.error;
+      delete n.pendingSync;syncedNotes++;
+    }catch(e){ failed=true;console.warn("La nota sigue pendiente de sincronizar:",n.folio,e); }
   }
   renderAll();
+  return {ok:!failed,notes:syncedNotes,users:syncedUsers};
 }
 document.getElementById("retrySyncBtn").onclick=async()=>{
   setSync("Sincronizando…");
-  await sincronizarPendientes();
+  const result=await sincronizarPendientes();
   await loadCloudData(false);
-  setSync(CLOUD_ENABLED?"Sincronizado":"Modo local: falta configurar Supabase", CLOUD_ENABLED?"ok":"error");
+  if(result?.ok){
+    const detalle=result.notes?` · ${result.notes} nota(s) pendiente(s) subida(s)`:"";
+    setSync("Sincronizado"+detalle,"ok");
+  }else{
+    setSync("Sin conexión: hay datos pendientes","error");
+  }
 };
 wireFilterInputs();
 loadCloudData().then(()=>{restoreSession();startRealtime();sincronizarPendientes()});
